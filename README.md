@@ -1,0 +1,1 @@
+this is a simple web app that will recieve a excel formatted file and it automatically create a summary of that data according to user preferences with the help of AI integration.                                                                                                                                                                 erer
