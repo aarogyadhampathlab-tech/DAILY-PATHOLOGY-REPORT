@@ -15,6 +15,18 @@ except Exception:
     OPENAI_AVAILABLE = False
 
 st.set_page_config(page_title="Daily Pathology Report", page_icon="📊", layout="wide")
+st.markdown("""
+<style>
+.main { background-color: #f8f9fa; }
+.block-container { padding-top: 1rem; }
+[data-testid="stMetric"] {
+    background-color: white;
+    padding: 15px;
+    border-radius: 10px;
+    box-shadow: 0 0 6px rgba(0,0,0,0.08);
+}
+</style>
+""", unsafe_allow_html=True)
 st.title("📊 Daily Pathology Report Generator")
 
 # -------------------------
@@ -226,3 +238,4 @@ if uploaded_file:
         file_name="daily_pathology_report.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
