@@ -212,7 +212,20 @@ def style_excel(test_counts, cat_counts):
 # -------------------------
 # Streamlit App
 # -------------------------
-uploaded_file = st.file_uploader("Upload Excel (.xlsx)", type=["xlsx"])
+st.sidebar.title("🧪 Report Controls")
+st.sidebar.markdown("Aarogyadham Hospital")
+
+uploaded_file = st.sidebar.file_uploader(
+    "Upload Daily Excel File",
+    type=["xlsx"]
+)
+
+st.sidebar.divider()
+
+show_raw = st.sidebar.checkbox("Show Raw Data", value=False)
+show_test_table = st.sidebar.checkbox("Show Test-wise Table", value=True)
+show_category_table = st.sidebar.checkbox("Show Category Summary", value=True)
+
 if uploaded_file:
     df = pd.read_excel(uploaded_file)
 
@@ -245,5 +258,6 @@ if uploaded_file:
         file_name="daily_pathology_report.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
 
 
