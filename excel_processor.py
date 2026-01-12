@@ -27,7 +27,14 @@ st.markdown("""
 }
 </style>
 """, unsafe_allow_html=True)
-st.title("📊 Daily Pathology Report Generator")
+st.markdown("""
+<h2 style="margin-bottom:0">Daily Pathology Report</h2>
+<p style="color:gray;margin-top:0">
+Pathology Department · Aarogyadham Hospital
+</p>
+<hr>
+""", unsafe_allow_html=True)
+
 
 # -------------------------
 # Static category rules (includes your custom mappings)
@@ -238,4 +245,5 @@ if uploaded_file:
         file_name="daily_pathology_report.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
 
