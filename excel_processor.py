@@ -230,15 +230,15 @@ def style_excel(test_counts, cat_counts):
     return final_output
 
 # -------------------------
-# Sidebar & Execution
+# Main Controls
 # -------------------------
-st.sidebar.title("🧪 Report Controls")
-st.sidebar.write("Aarogyadham Hospital")
-uploaded_file = st.sidebar.file_uploader("Upload Daily Excel File", type=["xlsx"])
-st.sidebar.divider()
-show_raw = st.sidebar.checkbox("Show Raw Data", value=False)
-show_test_table = st.sidebar.checkbox("Show Test-wise Table", value=True)
-show_category_table = st.sidebar.checkbox("Show Category Summary", value=True)
+st.subheader("🧪 Report Controls")
+st.write("Aarogyadham Hospital")
+uploaded_file = st.file_uploader("Upload Daily Excel File", type=["xlsx"])
+st.divider()
+show_raw = st.checkbox("Show Raw Data", value=False)
+show_test_table = st.checkbox("Show Test-wise Table", value=True)
+show_category_table = st.checkbox("Show Category Summary", value=True)
 
 if uploaded_file:
     df = pd.read_excel(uploaded_file)
@@ -303,13 +303,13 @@ else:
 # -------------------------
 # Saved Data Management
 # -------------------------
-st.sidebar.divider()
-st.sidebar.subheader("📂 Saved Data Management")
+st.divider()
+st.subheader("📂 Saved Data Management")
 
 saved_dates = get_saved_dates()
 if saved_dates:
-    selected_date = st.sidebar.selectbox("Select Date to View/Delete", saved_dates)
-    col1, col2 = st.sidebar.columns(2)
+    selected_date = st.selectbox("Select Date to View/Delete", saved_dates)
+    col1, col2 = st.columns(2)
     if col1.button("View Data"):
         df_view, tc_view, cc_view = load_processed_data(selected_date)
         if df_view is not None:
@@ -323,7 +323,7 @@ if saved_dates:
         st.success(f"Data for {selected_date} deleted.")
         st.rerun()  # Refresh to update list
 else:
-    st.sidebar.write("No saved data yet.")
+    st.write("No saved data yet.")
 
 # -------------------------
 # Cumulative Visualization
