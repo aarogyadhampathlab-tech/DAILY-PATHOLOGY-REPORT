@@ -5,8 +5,6 @@ from openpyxl import load_workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from datetime import datetime, timedelta
 import os
-import pickle  # For saving/loading DataFrames
-# ------------------------- (existing code remains unchanged up to here)
 
 # ------------------------- (add new section for data persistence)
 DATA_DIR = "processed_data"
@@ -74,81 +72,6 @@ def compute_cumulative():
         cumulative_cc = None
     return cumulative_tc, cumulative_cc
 
-# ------------------------- (modify the execution section)
-# ------------------------- (existing code up to "if uploaded_file:" remains)
-
-if uploaded_file:
-    df = pd.read_excel(uploaded_file)
-    test_counts = build_test_counts(df)
-    cat_counts, categorized_df = build_category_counts(df)
-    
-    # Save the processed data
-    save_processed_data(yesterday_str, df, test_counts, cat_counts)
-    st.success(f"Data for {yesterday_str} saved successfully.")
-    
-    # Dashboard Metrics (existing)
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Total Tests", len(df))
-    m2.metric("IPD", test_counts.iloc[-1]["IPD"])
-    m3.metric("OPD", test_counts.iloc[-1]["OPD"])
-
-    # Download Button (existing)
-    excel_report = style_excel(test_counts, cat_counts)
-    st.sidebar.download_button(
-        label="📥 Download Excel Report",
-        data=excel_report.getvalue(),
-        file_name=f"Pathology_Report_{yesterday_str}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-
-    # Existing display sections (existing)
-    if show_category_table:
-        st.subheader("Category Summary")
-        st.table(cat_counts)
-    if show_test_table:
-        st.subheader("Detailed Test Counts")
-        st.dataframe(test_counts, use_container_width=True, hide_index=True)
-    if show_raw:
-        st.subheader("Raw Data Preview")
-        st.dataframe(df.head(100), use_container_width=True)
-
-# ------------------------- (add new section for managing saved data)
-st.sidebar.divider()
-st.sidebar.subheader("📂 Saved Data Management")
-
-saved_dates = get_saved_dates()
-if saved_dates:
-    selected_date = st.sidebar.selectbox("Select Date to View/Delete", saved_dates)
-    col1, col2 = st.sidebar.columns(2)
-    if col1.button("View Data"):
-        df_view, tc_view, cc_view = load_processed_data(selected_date)
-        if df_view is not None:
-            st.subheader(f"Data for {selected_date}")
-            st.dataframe(tc_view, use_container_width=True, hide_index=True)
-            st.table(cc_view)
-        else:
-            st.error("Data not found.")
-    if col2.button("Delete Data"):
-        delete_processed_data(selected_date)
-        st.success(f"Data for {selected_date} deleted.")
-        st.rerun()  # Refresh to update list
-else:
-    st.sidebar.write("No saved data yet.")
-
-# ------------------------- (add cumulative visualization section)
-st.divider()
-st.header("📊 Cumulative Summary")
-cum_tc, cum_cc = compute_cumulative()
-if cum_tc is not None and cum_cc is not None:
-    st.subheader("Cumulative Test Counts")
-    st.dataframe(cum_tc, use_container_width=True, hide_index=True)
-    st.bar_chart(cum_tc.set_index('TestName')[['IPD', 'OPD', 'Total']])
-    
-    st.subheader("Cumulative Category Counts")
-    st.table(cum_cc)
-    st.bar_chart(cum_cc.set_index('Category')['Count'])
-else:
-    st.info("No cumulative data available.")
 # -------------------------
 # Configuration & Dates
 # -------------------------
@@ -332,6 +255,10 @@ if uploaded_file:
     test_counts = build_test_counts(df)
     cat_counts, categorized_df = build_category_counts(df)
     
+    # Save the processed data
+    save_processed_data(yesterday_str, df, test_counts, cat_counts)
+    st.success(f"Data for {yesterday_str} saved successfully.")
+    
     # Dashboard Metrics
     m1, m2, m3 = st.columns(3)
     m1.metric("Total Tests", len(df))
@@ -358,3 +285,45 @@ if uploaded_file:
         st.dataframe(df.head(100), use_container_width=True)
 else:
     st.info("Upload the Daily Excel file in the sidebar to begin.")
+
+# -------------------------
+# Saved Data Management
+# -------------------------
+st.sidebar.divider()
+st.sidebar.subheader("📂 Saved Data Management")
+
+saved_dates = get_saved_dates()
+if saved_dates:
+    selected_date = st.sidebar.selectbox("Select Date to View/Delete", saved_dates)
+    col1, col2 = st.sidebar.columns(2)
+    if col1.button("View Data"):
+        df_view, tc_view, cc_view = load_processed_data(selected_date)
+        if df_view is not None:
+            st.subheader(f"Data for {selected_date}")
+            st.dataframe(tc_view, use_container_width=True, hide_index=True)
+            st.table(cc_view)
+        else:
+            st.error("Data not found.")
+    if col2.button("Delete Data"):
+        delete_processed_data(selected_date)
+        st.success(f"Data for {selected_date} deleted.")
+        st.rerun()  # Refresh to update list
+else:
+    st.sidebar.write("No saved data yet.")
+
+# -------------------------
+# Cumulative Visualization
+# -------------------------
+st.divider()
+st.header("📊 Cumulative Summary")
+cum_tc, cum_cc = compute_cumulative()
+if cum_tc is not None and cum_cc is not None:
+    st.subheader("Cumulative Test Counts")
+    st.dataframe(cum_tc, use_container_width=True, hide_index=True)
+    st.bar_chart(cum_tc.set_index('TestName')[['IPD', 'OPD', 'Total']])
+    
+    st.subheader("Cumulative Category Counts")
+    st.table(cum_cc)
+    st.bar_chart(cum_cc.set_index('Category')['Count'])
+else:
+    st.info("No cumulative data available.")
