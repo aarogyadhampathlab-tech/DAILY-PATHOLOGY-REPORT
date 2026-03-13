@@ -154,7 +154,11 @@ def ai_batch_categorize(unknown_tests):
 
 def build_test_counts(df):
     df = df.copy()
-    df["BookingMode_norm"] = df["BookingMode"].apply(normalize_bookingmode)
+    if 'BookingMode' in df.columns:
+        df["BookingMode_norm"] = df["BookingMode"].apply(normalize_bookingmode)
+    else:
+        st.warning("BookingMode column not found in Excel. Assuming all entries are OPD.")
+        df["BookingMode_norm"] = "OPD Indent"
     pivot = df.pivot_table(index="TestName", columns="BookingMode_norm", aggfunc="size", fill_value=0).reset_index()
     pivot["IPD"] = pivot.get("IPD", 0)
     pivot["OPD"] = pivot.get("OPD Indent", 0)
@@ -242,6 +246,13 @@ show_category_table = st.checkbox("Show Category Summary", value=True)
 
 if uploaded_file:
     df = pd.read_excel(uploaded_file)
+    
+    # Check for required columns
+    required_columns = ['TestName', 'subgroup']
+    missing = [col for col in required_columns if col not in df.columns]
+    if missing:
+        st.error(f"Missing required columns: {missing}. Please ensure the Excel file has these columns.")
+        st.stop()
     
     # Extract report date from Excel file
     if 'Date' in df.columns:
