@@ -75,7 +75,7 @@ def compute_cumulative():
 # -------------------------
 # Configuration & Dates
 # -------------------------
-# Calculate yesterday's date for report labeling
+# Calculate default dates (will be updated from Excel if available)
 today = datetime.today()
 yesterday = today - timedelta(days=1)
 today_str = today.strftime('%d-%m-%Y')
@@ -103,16 +103,6 @@ st.markdown("""
     box-shadow: 0 0 6px rgba(0,0,0,0.08);
 }
 </style>
-""", unsafe_allow_html=True)
-
-# Header with dynamic date
-st.markdown(f"""
-<h2 style="margin-bottom:0">Daily Pathology Report</h2>
-<p style="color:gray;margin-top:0">
-Pathology Department · Aarogyadham Hospital <br>
-<b>Report Date: {yesterday_str}</b> | Generated: {today_str}
-</p>
-<hr>
 """, unsafe_allow_html=True)
 
 # -------------------------
@@ -252,6 +242,30 @@ show_category_table = st.sidebar.checkbox("Show Category Summary", value=True)
 
 if uploaded_file:
     df = pd.read_excel(uploaded_file)
+    
+    # Extract report date from Excel file
+    if 'Date' in df.columns:
+        unique_dates = pd.to_datetime(df['Date'].dropna()).dt.date.unique()
+        if len(unique_dates) == 1:
+            report_date = unique_dates[0]
+            yesterday_str = report_date.strftime('%d-%m-%Y')
+        else:
+            st.warning("Multiple dates found in Excel file. Using the most common date.")
+            report_date = pd.to_datetime(df['Date'].dropna()).dt.date.mode()[0]
+            yesterday_str = report_date.strftime('%d-%m-%Y')
+    else:
+        st.warning("No 'Date' column found in Excel file. Using default date.")
+    
+    # Header with dynamic date
+    st.markdown(f"""
+    <h2 style="margin-bottom:0">Daily Pathology Report</h2>
+    <p style="color:gray;margin-top:0">
+    Pathology Department · Aarogyadham Hospital <br>
+    <b>Report Date: {yesterday_str}</b> | Generated: {today_str}
+    </p>
+    <hr>
+    """, unsafe_allow_html=True)
+    
     test_counts = build_test_counts(df)
     cat_counts, categorized_df = build_category_counts(df)
     
@@ -265,15 +279,6 @@ if uploaded_file:
     m2.metric("IPD", test_counts.iloc[-1]["IPD"])
     m3.metric("OPD", test_counts.iloc[-1]["OPD"])
 
-    # Download Button
-    excel_report = style_excel(test_counts, cat_counts)
-    st.sidebar.download_button(
-        label="📥 Download Excel Report",
-        data=excel_report.getvalue(),
-        file_name=f"Pathology_Report_{yesterday_str}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-
     if show_category_table:
         st.subheader("Category Summary")
         st.table(cat_counts)
@@ -283,6 +288,15 @@ if uploaded_file:
     if show_raw:
         st.subheader("Raw Data Preview")
         st.dataframe(df.head(100), use_container_width=True)
+
+    # Download Button
+    excel_report = style_excel(test_counts, cat_counts)
+    st.download_button(
+        label="📥 Download Excel Report",
+        data=excel_report.getvalue(),
+        file_name=f"Pathology_Report_{yesterday_str}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 else:
     st.info("Upload the Daily Excel file in the sidebar to begin.")
 
