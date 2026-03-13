@@ -290,6 +290,15 @@ if uploaded_file:
     m2.metric("IPD", test_counts.iloc[-1]["IPD"])
     m3.metric("OPD", test_counts.iloc[-1]["OPD"])
 
+    # Download Button
+    excel_report = style_excel(test_counts, cat_counts)
+    st.download_button(
+        label="📥 Download Excel Report",
+        data=excel_report.getvalue(),
+        file_name=f"Pathology_Report_{yesterday_str}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
     if show_category_table:
         st.subheader("Category Summary")
         st.table(cat_counts)
@@ -299,15 +308,6 @@ if uploaded_file:
     if show_raw:
         st.subheader("Raw Data Preview")
         st.dataframe(df.head(100), use_container_width=True)
-
-    # Download Button
-    excel_report = style_excel(test_counts, cat_counts)
-    st.download_button(
-        label="📥 Download Excel Report",
-        data=excel_report.getvalue(),
-        file_name=f"Pathology_Report_{yesterday_str}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
 else:
     st.info("Upload the Daily Excel file in the sidebar to begin.")
 
