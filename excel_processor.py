@@ -1,354 +1,599 @@
 import streamlit as st
 import pandas as pd
-from io import BytesIO
-from openpyxl import load_workbook
-from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
-from datetime import datetime, timedelta
-import os
+import plotly.graph_objects as go
+import plotly.express as px
+from datetime import datetime
 
-# ------------------------- (add new section for data persistence)
-DATA_DIR = "processed_data"
-os.makedirs(DATA_DIR, exist_ok=True)
+from config import default_dates
+from helpers import build_test_counts, build_category_counts, style_excel
+from data_persistence import save_processed_data, load_processed_data, delete_processed_data, get_saved_dates, compute_cumulative
 
-def save_processed_data(date_str, df, test_counts, cat_counts):
-    """Save processed data for a given date."""
-    date_dir = os.path.join(DATA_DIR, date_str)
-    os.makedirs(date_dir, exist_ok=True)
-    df.to_csv(os.path.join(date_dir, "raw.csv"), index=False)
-    test_counts.to_csv(os.path.join(date_dir, "test_counts.csv"), index=False)
-    cat_counts.to_csv(os.path.join(date_dir, "cat_counts.csv"), index=False)
+st.set_page_config(page_title="Pathology Report", page_icon="🧪", layout="wide")
 
-def load_processed_data(date_str):
-    """Load processed data for a given date."""
-    date_dir = os.path.join(DATA_DIR, date_str)
-    if not os.path.exists(date_dir):
-        return None, None, None
-    df = pd.read_csv(os.path.join(date_dir, "raw.csv"))
-    test_counts = pd.read_csv(os.path.join(date_dir, "test_counts.csv"))
-    cat_counts = pd.read_csv(os.path.join(date_dir, "cat_counts.csv"))
-    return df, test_counts, cat_counts
-
-def delete_processed_data(date_str):
-    """Delete processed data for a given date."""
-    date_dir = os.path.join(DATA_DIR, date_str)
-    if os.path.exists(date_dir):
-        import shutil
-        shutil.rmtree(date_dir)
-
-def get_saved_dates():
-    """Get list of saved dates."""
-    if not os.path.exists(DATA_DIR):
-        return []
-    return sorted([d for d in os.listdir(DATA_DIR) if os.path.isdir(os.path.join(DATA_DIR, d))])
-
-def compute_cumulative():
-    """Compute cumulative sums across all saved dates."""
-    dates = get_saved_dates()
-    if not dates:
-        return None, None
-    all_test_counts = []
-    all_cat_counts = []
-    for date in dates:
-        _, tc, cc = load_processed_data(date)
-        if tc is not None:
-            tc['Date'] = date
-            all_test_counts.append(tc)
-        if cc is not None:
-            cc['Date'] = date
-            all_cat_counts.append(cc)
-    if all_test_counts:
-        combined_tc = pd.concat(all_test_counts, ignore_index=True)
-        cumulative_tc = combined_tc.groupby('TestName')[['IPD', 'OPD', 'Total']].sum().reset_index()
-        grand_total_tc = pd.DataFrame([{"TestName": "Grand Total", "IPD": int(cumulative_tc["IPD"].sum()), "OPD": int(cumulative_tc["OPD"].sum()), "Total": int(cumulative_tc["Total"].sum())}])
-        cumulative_tc = pd.concat([cumulative_tc, grand_total_tc], ignore_index=True)
-    else:
-        cumulative_tc = None
-    if all_cat_counts:
-        combined_cc = pd.concat(all_cat_counts, ignore_index=True)
-        cumulative_cc = combined_cc.groupby('Category')[['Count']].sum().reset_index()
-        grand_total_cc = pd.DataFrame([{"Category": "Grand Total", "Count": int(cumulative_cc["Count"].sum())}])
-        cumulative_cc = pd.concat([cumulative_cc, grand_total_cc], ignore_index=True)
-    else:
-        cumulative_cc = None
-    return cumulative_tc, cumulative_cc
-
-# -------------------------
-# Configuration & Dates
-# -------------------------
-# Calculate default dates (will be updated from Excel if available)
-today = datetime.today()
-yesterday = today - timedelta(days=1)
-today_str = today.strftime('%d-%m-%Y')
-yesterday_str = yesterday.strftime('%d-%m-%Y')
-
-# Optional: AI categorization (safe fallback if unavailable)
-try:
-    import openai
-    OPENAI_AVAILABLE = True
-    openai.api_key = os.getenv("OPENAI_API_KEY")
-except Exception:
-    OPENAI_AVAILABLE = False
-
-st.set_page_config(page_title="Daily Pathology Report", page_icon="📊", layout="wide")
-
-# Custom CSS for modern look
+# ============================================================================
+# BLACK & WHITE MODERN GLOSSY CSS STYLING
+# ============================================================================
 st.markdown("""
 <style>
-.main { background-color: #f8f9fa; }
-.block-container { padding-top: 1rem; }
+* {
+    margin: 0;
+    padding: 0;
+}
+
+html, body, [data-testid="stAppViewContainer"] {
+    background: linear-gradient(135deg, #0f0f0f 0%, #1a1a1a 100%);
+    min-height: 100vh;
+}
+
+[data-testid="stAppViewContainer"] {
+    background: linear-gradient(135deg, #0f0f0f 0%, #1a1a1a 100%);
+}
+
+[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #1a1a1a 0%, #2d2d2d 100%);
+    border-right: 2px solid #333;
+}
+
+.main {
+    background: transparent;
+}
+
+.block-container {
+    padding: 2rem 1rem;
+    max-width: 1400px;
+}
+
+/* Card Styling */
+.glossy-card {
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 20px;
+    padding: 25px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    margin-bottom: 20px;
+    transition: transform 0.3s ease, box-shadow 0.3s ease, border 0.3s ease;
+}
+
+.glossy-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 12px 40px rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+/* Upload Section */
+.upload-container {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 30px;
+    padding: 80px 40px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(10px);
+    border: 2px solid rgba(255, 255, 255, 0.1);
+    text-align: center;
+    margin: 40px 0;
+    transition: all 0.3s ease;
+}
+
+.upload-container:hover {
+    background: rgba(255, 255, 255, 0.08);
+    box-shadow: 0 25px 70px rgba(255, 255, 255, 0.05);
+    border: 2px solid rgba(255, 255, 255, 0.15);
+}
+
+.upload-icon {
+    font-size: 5em;
+    margin-bottom: 20px;
+    animation: float 3s ease-in-out infinite;
+}
+
+@keyframes float {
+    0%, 100% { transform: translateY(0px); }
+    50% { transform: translateY(-20px); }
+}
+
+.upload-title {
+    color: #ffffff;
+    font-size: 2.5em;
+    font-weight: 700;
+    margin-bottom: 10px;
+}
+
+.upload-subtitle {
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 1.1em;
+    margin-bottom: 30px;
+}
+
+/* Header Styling */
+.header-title {
+    background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+    color: white;
+    padding: 50px;
+    border-radius: 25px;
+    text-align: center;
+    margin-bottom: 30px;
+    box-shadow: 0 15px 50px rgba(0, 0, 0, 0.4);
+    border: 2px solid rgba(255, 255, 255, 0.1);
+}
+
+.header-title h1 {
+    font-size: 3.5em;
+    font-weight: 800;
+    margin-bottom: 10px;
+    background: linear-gradient(135deg, #ffffff 0%, #c0c0c0 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.header-title p {
+    font-size: 1.2em;
+    opacity: 0.85;
+    color: rgba(255, 255, 255, 0.8);
+}
+
+/* Metric Cards */
 [data-testid="stMetric"] {
-    background-color: white;
-    padding: 15px;
-    border-radius: 10px;
-    box-shadow: 0 0 6px rgba(0,0,0,0.08);
+    background: rgba(255, 255, 255, 0.08);
+    padding: 25px;
+    border-radius: 15px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(10px);
+}
+
+[data-testid="stMetricValue"] {
+    color: #ffffff;
+    font-size: 2.5em !important;
+    font-weight: 800;
+}
+
+[data-testid="stMetricLabel"] {
+    color: rgba(255, 255, 255, 0.7) !important;
+}
+
+/* Button Styling */
+.stButton > button {
+    background: linear-gradient(135deg, #ffffff 0%, #e8e8e8 100%);
+    color: #1a1a1a;
+    border: none;
+    border-radius: 12px;
+    padding: 12px 30px;
+    font-weight: 700;
+    font-size: 1em;
+    box-shadow: 0 4px 15px rgba(255, 255, 255, 0.2);
+    transition: all 0.3s ease;
+}
+
+.stButton > button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 25px rgba(255, 255, 255, 0.3);
+    background: linear-gradient(135deg, #f0f0f0 0%, #d0d0d0 100%);
+}
+
+/* Upload Button */
+.stFileUploader > button {
+    background: linear-gradient(135deg, #ffffff 0%, #e8e8e8 100%) !important;
+    color: #1a1a1a !important;
+    font-weight: 700 !important;
+}
+
+/* Tab Styling */
+[data-testid="stTabs"] [role="tablist"] {
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+}
+
+[data-testid="stTabs"] [role="tab"] {
+    background: transparent;
+    color: rgba(255, 255, 255, 0.6);
+    border: none;
+    padding: 12px 20px;
+    font-weight: 600;
+    border-bottom: 3px solid transparent;
+    transition: all 0.3s ease;
+}
+
+[data-testid="stTabs"] [role="tab"]:hover {
+    color: rgba(255, 255, 255, 0.9);
+}
+
+[data-testid="stTabs"] [role="tab"][aria-selected="true"] {
+    background: transparent;
+    color: white;
+    border-bottom: 3px solid #ffffff;
+}
+
+/* Selectbox Styling */
+[data-testid="stSelectbox"] {
+    border-radius: 12px;
+}
+
+.stSelectbox {
+    margin-bottom: 20px;
+}
+
+/* Section Header */
+.section-header {
+    font-size: 1.8em;
+    font-weight: 700;
+    color: #ffffff;
+    margin: 30px 0 20px 0;
+    padding-bottom: 10px;
+    border-bottom: 3px solid rgba(255, 255, 255, 0.2);
+}
+
+/* Table Styling */
+[data-testid="stDataFrame"] {
+    border-radius: 12px;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.05);
+}
+
+/* Download Button */
+.stDownloadButton > button {
+    background: linear-gradient(135deg, #ffffff 0%, #e8e8e8 100%);
+    color: #1a1a1a;
+    font-weight: 700;
+}
+
+.stDownloadButton > button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(255, 255, 255, 0.3);
+}
+
+/* Success/Error Messages */
+.stSuccess {
+    background: rgba(76, 175, 80, 0.15);
+    border-left: 5px solid #4CAF50;
+    border-radius: 8px;
+    color: rgba(255, 255, 255, 0.9);
+}
+
+.stError {
+    background: rgba(244, 67, 54, 0.15);
+    border-left: 5px solid #f44336;
+    border-radius: 8px;
+    color: rgba(255, 255, 255, 0.9);
+}
+
+.stInfo {
+    background: rgba(33, 150, 243, 0.15);
+    border-left: 5px solid #2196F3;
+    border-radius: 8px;
+    color: rgba(255, 255, 255, 0.9);
+}
+
+.stWarning {
+    background: rgba(255, 152, 0, 0.15);
+    border-left: 5px solid #FF9800;
+    border-radius: 8px;
+    color: rgba(255, 255, 255, 0.9);
+}
+
+/* Divider */
+hr {
+    border: none;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+    margin: 30px 0;
+}
+
+/* Text Colors */
+h1, h2, h3, h4, h5, h6 {
+    color: #ffffff !important;
+}
+
+p, span, label {
+    color: rgba(255, 255, 255, 0.85) !important;
+}
+
+/* Input Fields */
+input {
+    background: rgba(255, 255, 255, 0.08) !important;
+    color: #ffffff !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    border-radius: 8px !important;
+}
+
+input::placeholder {
+    color: rgba(255, 255, 255, 0.4) !important;
+}
+
+/* Checkbox */
+[data-testid="stCheckbox"] {
+    color: rgba(255, 255, 255, 0.9) !important;
 }
 </style>
 """, unsafe_allow_html=True)
 
-# -------------------------
-# Static category rules
-# -------------------------
-CATEGORY_RULES = {
-    "Biochemistry": [
-        "RENAL FUNCTION TEST", "LIVER FUNCTION TEST", "BLOOD GLUCOSE",
-        "GLYCOSYLATED HB", "SGOT", "SGPT", "BLOOD UREA",
-        "VIRAL MARKER", "PREOPERATIVE PROFILE", "SEROLOGY", "PT/INR"
-    ],
-    "Clinical": [
-        "URINE ANALYSIS", "PLEURAL FLUID EXAMINATION",
-        "Plural Fluid for R/E Biochemistry / ADA"
-    ],
-    "Hematology": [
-        "COMPLETE BLOOD COUNTS [CBC]", "TOTAL LEUCOCYTE COUNT",
-        "FLUID DLC", "COMPLETE HEMOGRAM WITH ESR", "BLOOD GROUP"
-    ],
-    "Immunology": [
-        "Hormone Assays Report", "Serum IGE", "VDRL TITER", "HBsAg",
-        "HCV ANTIBODY TEST", "CA-125", "THYROID FUNCTION TEST",
-        "THYROID STIMULATING HORMONE", "TOTAL THYROID PROFILE",
-        "IgG IgM S Typhe", "C-REACTIVE PROTEIN"
-    ]
-}
+# ============================================================================
+# HEADER
+# ============================================================================
+st.markdown("""
+<div class="header-title">
+    <h1>🧪 Pathology Report Dashboard</h1>
+    <p>Aarogyadham Hospital - Professional Report Management System</p>
+</div>
+""", unsafe_allow_html=True)
 
-# -------------------------
-# Helpers
-# -------------------------
-def normalize_bookingmode(x):
-    s = "" if pd.isna(x) else str(x).strip().upper()
-    if "IPD" in s: return "IPD"
-    return "OPD Indent"
+# Initialize session state for tabs
+if 'active_tab' not in st.session_state:
+    st.session_state.active_tab = 0
 
-def ai_batch_categorize(unknown_tests):
-    if not unknown_tests or not OPENAI_AVAILABLE or not openai.api_key:
-        return {}
-    tests_text = "\n".join([f"- Test: {t}, Subgroup: {s}" for t, s in unknown_tests])
-    prompt = f"Categories: Biochemistry, Clinical, Hematology, Immunology. Assign each test. Return CSV: TestName,Subgroup,Category\n{tests_text}"
-    try:
-        resp = openai.ChatCompletion.create(model="gpt-4o-mini", messages=[{"role": "user", "content": prompt}], temperature=0)
-        mapping = {}
-        for line in resp['choices'][0]['message']['content'].strip().splitlines():
-            parts = [p.strip() for p in line.split(",")]
-            if len(parts) == 3: mapping[(parts[0], parts[1])] = parts[2]
-        return mapping
-    except: return {}
+# Create main tabs
+tab1, tab2, tab3 = st.tabs(["📊 Daily Report", "📁 Saved Reports", "📈 Analytics"])
 
-def build_test_counts(df):
-    df = df.copy()
-    if 'BookingMode' in df.columns:
-        df["BookingMode_norm"] = df["BookingMode"].apply(normalize_bookingmode)
-    else:
-        st.warning("BookingMode column not found in Excel. Assuming all entries are OPD.")
-        df["BookingMode_norm"] = "OPD Indent"
-    pivot = df.pivot_table(index="TestName", columns="BookingMode_norm", aggfunc="size", fill_value=0).reset_index()
-    pivot["IPD"] = pivot.get("IPD", 0)
-    pivot["OPD"] = pivot.get("OPD Indent", 0)
-    pivot["Total"] = pivot[["IPD", "OPD"]].sum(axis=1)
-    result = pivot[["TestName", "IPD", "OPD", "Total"]].sort_values("TestName").reset_index(drop=True)
-    grand_total = pd.DataFrame([{"TestName": "Grand Total", "IPD": int(result["IPD"].sum()), "OPD": int(result["OPD"].sum()), "Total": int(result["Total"].sum())}])
-    return pd.concat([result, grand_total], ignore_index=True)
-
-def build_category_counts(df):
-    df = df.copy()
-    unknown_tests, final_cats = [], []
-    for _, row in df.iterrows():
-        text = f"{row['TestName']} {row['subgroup']}".upper()
-        final = next((cat for cat, keys in CATEGORY_RULES.items() if any(k.upper() in text for k in keys)), None)
-        if not final: unknown_tests.append((str(row['TestName']), str(row['subgroup'])))
-        final_cats.append(final)
-    ai_mapping = ai_batch_categorize(unknown_tests)
-    df["Final_Category"] = [c or ai_mapping.get((str(r.TestName), str(r.subgroup)), "Biochemistry") for c, r in zip(final_cats, df.itertuples())]
-    results = [{"Category": c, "Count": int((df["Final_Category"] == c).sum())} for c in CATEGORY_RULES.keys()]
-    results.append({"Category": "Grand Total", "Count": int(len(df))})
-    return pd.DataFrame(results), df
-
-def style_excel(test_counts, cat_counts):
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        test_counts.to_excel(writer, sheet_name="Analysis", startrow=2, index=False)
-        start_cat = len(test_counts) + 5
-        cat_counts.to_excel(writer, sheet_name="Analysis", startrow=start_cat+1, index=False)
-
-    wb = load_workbook(filename=BytesIO(output.getvalue()))
-    ws = wb.active
-
-    # Style definitions
-    thin_side = Side(border_style="thin", color="000000")
-    full_border = Border(top=thin_side, left=thin_side, right=thin_side, bottom=thin_side)
-    header_fill = PatternFill(start_color="87CEFA", end_color="87CEFA", fill_type="solid")
-    total_fill = PatternFill(start_color="FFFFCC", end_color="FFFFCC", fill_type="solid")
-
-    # Title & Previous Day Date
-    ws.merge_cells("A1:D1")
-    ws["A1"] = f"DAILY PATHOLOGY REPORT - {yesterday_str}"
-    ws["A1"].font = Font(bold=True, size=14)
-    ws["A1"].alignment = Alignment(horizontal="center")
-
-    # 1. Apply Borders to Test Counts Table
-    for row in ws.iter_rows(min_row=3, max_row=3 + len(test_counts), min_col=1, max_col=4):
-        for cell in row:
-            cell.border = full_border
-            if cell.row == 3: # Header
-                cell.fill = header_fill
-                cell.font = Font(bold=True)
-            if "Grand Total" in str(ws.cell(row=cell.row, column=1).value):
-                cell.fill = total_fill
-                cell.font = Font(bold=True)
-
-    # 2. Apply Borders to Category Table
-    cat_header_idx = start_cat + 2
-    for row in ws.iter_rows(min_row=cat_header_idx, max_row=cat_header_idx + len(cat_counts), min_col=1, max_col=2):
-        for cell in row:
-            cell.border = full_border
-            if cell.row == cat_header_idx: # Header
-                cell.fill = header_fill
-                cell.font = Font(bold=True)
-            if "Grand Total" in str(ws.cell(row=cell.row, column=1).value):
-                cell.fill = total_fill
-                cell.font = Font(bold=True)
-
-    ws.column_dimensions["A"].width = 45
-    for col in ["B","C","D"]: ws.column_dimensions[col].width = 12
-
-    final_output = BytesIO()
-    wb.save(final_output)
-    return final_output
-
-# -------------------------
-# Main Controls
-# -------------------------
-st.subheader("🧪 Report Controls")
-st.write("Aarogyadham Hospital")
-uploaded_file = st.file_uploader("Upload Daily Excel File", type=["xlsx"])
-st.divider()
-show_raw = st.checkbox("Show Raw Data", value=False)
-show_test_table = st.checkbox("Show Test-wise Table", value=True)
-show_category_table = st.checkbox("Show Category Summary", value=True)
-
-if uploaded_file:
-    df = pd.read_excel(uploaded_file)
+# ============================================================================
+# TAB 1: DAILY REPORT - BIG CENTERED UPLOAD & DOWNLOAD
+# ============================================================================
+with tab1:
+    st.markdown('<div class="glossy-card">', unsafe_allow_html=True)
     
-    # Check for required columns
-    required_columns = ['TestName', 'subgroup']
-    missing = [col for col in required_columns if col not in df.columns]
-    if missing:
-        st.error(f"Missing required columns: {missing}. Please ensure the Excel file has these columns.")
-        st.stop()
+    # Check if we have any saved data to show at top
+    saved_dates = get_saved_dates()
     
-    # Extract report date from Excel file
-    if 'Date' in df.columns:
-        unique_dates = pd.to_datetime(df['Date'].dropna()).dt.date.unique()
-        if len(unique_dates) == 1:
-            report_date = unique_dates[0]
-            yesterday_str = report_date.strftime('%d-%m-%Y')
-        else:
-            st.warning("Multiple dates found in Excel file. Using the most common date.")
-            report_date = pd.to_datetime(df['Date'].dropna()).dt.date.mode()[0]
-            yesterday_str = report_date.strftime('%d-%m-%Y')
-    else:
-        st.warning("No 'Date' column found in Excel file. Using default date.")
+    if saved_dates:
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.markdown("### 📂 Quick Access Previous Reports")
+        with col2:
+            if st.button("🔄 Refresh", use_container_width=True, key="refresh_tab1"):
+                st.rerun()
+        
+        saved_dates_sorted = sorted(saved_dates, reverse=True)[:5]  # Last 5
+        cols = st.columns(len(saved_dates_sorted))
+        for idx, date_str in enumerate(saved_dates_sorted):
+            with cols[idx]:
+                if st.button(f"📅 {date_str}", use_container_width=True, key=f"quick_date_{date_str}"):
+                    st.session_state[f"viewing_{date_str}"] = True
+        
+        st.divider()
     
-    # Header with dynamic date
-    st.markdown(f"""
-    <h2 style="margin-bottom:0">Daily Pathology Report</h2>
-    <p style="color:gray;margin-top:0">
-    Pathology Department · Aarogyadham Hospital <br>
-    <b>Report Date: {yesterday_str}</b> | Generated: {today_str}
-    </p>
-    <hr>
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    # ================================================================
+    # BIG CENTERED UPLOAD SECTION
+    # ================================================================
+    st.markdown("""
+    <div class="upload-container">
+        <div class="upload-icon">📥</div>
+        <div class="upload-title">Upload Daily Report</div>
+        <div class="upload-subtitle">Drag and drop your Excel file or click to browse</div>
+    </div>
     """, unsafe_allow_html=True)
     
-    test_counts = build_test_counts(df)
-    cat_counts, categorized_df = build_category_counts(df)
+    uploaded_file = st.file_uploader("", type=["xlsx"], key="upload_daily", label_visibility="collapsed")
     
-    # Save the processed data
-    save_processed_data(yesterday_str, df, test_counts, cat_counts)
-    st.success(f"Data for {yesterday_str} saved successfully.")
+    if uploaded_file:
+        try:
+            df = pd.read_excel(uploaded_file)
+            
+            # Validate required columns
+            required_columns = ['TestName', 'subgroup']
+            missing = [col for col in required_columns if col not in df.columns]
+            if missing:
+                st.error(f"❌ Missing columns: {', '.join(missing)}")
+                st.stop()
+            
+            # Extract date from data
+            if 'Date' in df.columns:
+                dates = pd.to_datetime(df['Date'].dropna()).dt.date.unique()
+                report_date = dates[0] if len(dates) > 0 else datetime.today().date()
+                report_date_str = report_date.strftime('%d-%m-%Y')
+            else:
+                report_date_str = datetime.today().strftime('%d-%m-%Y')
+            
+            # Process data
+            test_counts = build_test_counts(df)
+            cat_counts, categorized_df = build_category_counts(df)
+            
+            # Save data
+            save_processed_data(report_date_str, df, test_counts, cat_counts)
+            
+            st.success(f"✅ Report for {report_date_str} processed successfully!")
+            
+            # ================================================================
+            # REPORT DETAILS CARD WITH DOWNLOAD
+            # ================================================================
+            st.markdown('<div class="glossy-card">', unsafe_allow_html=True)
+            
+            col1, col2, col3 = st.columns([2, 2, 1.5])
+            with col1:
+                st.markdown(f"### 📅 Report Date: **{report_date_str}**")
+            with col2:
+                st.markdown(f"### 🏥 Hospital: Aarogyadham")
+            with col3:
+                excel_report = style_excel(test_counts, cat_counts, report_date_str)
+                st.download_button(
+                    label="⬇️ Download Report",
+                    data=excel_report.getvalue(),
+                    file_name=f"Report_{report_date_str}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+            
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+            # ================================================================
+            # KEY METRICS
+            # ================================================================
+            st.markdown("### 📊 Quick Metrics")
+            m1, m2, m3 = st.columns(3)
+            with m1:
+                st.metric("📋 Total Tests", len(df), delta=None)
+            with m2:
+                ipd_count = int(test_counts.iloc[-1]["IPD"]) if not test_counts.empty else 0
+                st.metric("🛏️ IPD", ipd_count)
+            with m3:
+                opd_count = int(test_counts.iloc[-1]["OPD"]) if not test_counts.empty else 0
+                st.metric("🚶 OPD", opd_count)
+            
+            # ================================================================
+            # DETAILED TABLES
+            # ================================================================
+            st.markdown('<div class="glossy-card">', unsafe_allow_html=True)
+            
+            col_t1, col_t2 = st.columns(2)
+            
+            with col_t1:
+                st.markdown("#### 🧬 Test-wise Breakdown")
+                st.dataframe(test_counts, use_container_width=True, hide_index=True)
+            
+            with col_t2:
+                st.markdown("#### 📂 Category Summary")
+                st.dataframe(cat_counts, use_container_width=True, hide_index=True)
+            
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+        except Exception as e:
+            st.error(f"❌ Error processing file: {str(e)}")
+    else:
+        st.info("💡 Select an Excel file with 'TestName' and 'subgroup' columns to begin")
+
+# ============================================================================
+# TAB 2: SAVED REPORTS MANAGEMENT
+# ============================================================================
+with tab2:
+    st.markdown('<div class="glossy-card">', unsafe_allow_html=True)
+    st.markdown("### 📁 Manage Your Saved Reports")
+    st.markdown('</div>', unsafe_allow_html=True)
     
-    # Dashboard Metrics
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Total Tests", len(df))
-    m2.metric("IPD", test_counts.iloc[-1]["IPD"])
-    m3.metric("OPD", test_counts.iloc[-1]["OPD"])
-
-    # Download Button
-    excel_report = style_excel(test_counts, cat_counts)
-    st.download_button(
-        label="📥 Download Excel Report",
-        data=excel_report.getvalue(),
-        file_name=f"Pathology_Report_{yesterday_str}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-
-    if show_category_table:
-        st.subheader("Category Summary")
-        st.table(cat_counts)
-    if show_test_table:
-        st.subheader("Detailed Test Counts")
-        st.dataframe(test_counts, use_container_width=True, hide_index=True)
-    if show_raw:
-        st.subheader("Raw Data Preview")
-        st.dataframe(df.head(100), use_container_width=True)
-else:
-    st.info("Upload the Daily Excel file in the sidebar to begin.")
-
-# -------------------------
-# Saved Data Management
-# -------------------------
-st.divider()
-st.subheader("📂 Saved Data Management")
-
-saved_dates = get_saved_dates()
-if saved_dates:
-    selected_date = st.selectbox("Select Date to View/Delete", saved_dates)
-    col1, col2 = st.columns(2)
-    if col1.button("View Data"):
-        df_view, tc_view, cc_view = load_processed_data(selected_date)
-        if df_view is not None:
-            st.subheader(f"Data for {selected_date}")
-            st.dataframe(tc_view, use_container_width=True, hide_index=True)
-            st.table(cc_view)
-        else:
-            st.error("Data not found.")
-    if col2.button("Delete Data"):
-        delete_processed_data(selected_date)
-        st.success(f"Data for {selected_date} deleted.")
-        st.rerun()  # Refresh to update list
-else:
-    st.write("No saved data yet.")
-
-# -------------------------
-# Cumulative Visualization
-# -------------------------
-st.divider()
-st.header("📊 Cumulative Summary")
-cum_tc, cum_cc = compute_cumulative()
-if cum_tc is not None and cum_cc is not None:
-    st.subheader("Cumulative Test Counts")
-    st.dataframe(cum_tc, use_container_width=True, hide_index=True)
-    st.bar_chart(cum_tc.set_index('TestName')[['IPD', 'OPD', 'Total']])
+    saved_dates = get_saved_dates()
     
-    st.subheader("Cumulative Category Counts")
-    st.table(cum_cc)
-    st.bar_chart(cum_cc.set_index('Category')['Count'])
-else:
-    st.info("No cumulative data available.")
+    if saved_dates:
+        # Sort dates in descending order (most recent first)
+        saved_dates_sorted = sorted(saved_dates, reverse=True)
+        
+        # Display as cards
+        cols = st.columns(1)
+        with cols[0]:
+            for date_str in saved_dates_sorted:
+                col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
+                
+                with col1:
+                    st.markdown(f"#### 📅 {date_str}")
+                
+                with col2:
+                    try:
+                        df_loaded, tc, cc = load_processed_data(date_str)
+                        if df_loaded is not None:
+                            st.caption(f"📋 {len(df_loaded)} tests")
+                    except:
+                        pass
+                
+                with col3:
+                    if st.button("👁️ View", key=f"view_{date_str}", use_container_width=True):
+                        st.session_state[f"viewing_{date_str}"] = True
+                
+                with col4:
+                    if st.button("🗑️ Delete", key=f"del_{date_str}", use_container_width=True):
+                        delete_processed_data(date_str)
+                        st.success(f"✅ Deleted report for {date_str}")
+                        st.rerun()
+                
+                # Show detailed view if clicked
+                if st.session_state.get(f"viewing_{date_str}", False):
+                    with st.expander(f"📋 Detailed View - {date_str}", expanded=True):
+                        try:
+                            df_view, tc_view, cc_view = load_processed_data(date_str)
+                            if df_view is not None:
+                                col_a, col_b = st.columns(2)
+                                with col_a:
+                                    st.markdown("**🧬 Test-wise Counts:**")
+                                    st.dataframe(tc_view, use_container_width=True, hide_index=True)
+                                with col_b:
+                                    st.markdown("**📂 Category Counts:**")
+                                    st.dataframe(cc_view, use_container_width=True, hide_index=True)
+                        except Exception as e:
+                            st.error(f"❌ Error loading data: {str(e)}")
+                
+                st.divider()
+    else:
+        st.info("📂 No saved reports yet. Upload a file in the Daily Report tab to save it.")
+
+# ============================================================================
+# TAB 3: CUMULATIVE ANALYTICS
+# ============================================================================
+with tab3:
+    st.markdown('<div class="glossy-card">', unsafe_allow_html=True)
+    st.markdown("### 📊 Cumulative Analytics Dashboard")
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    cum_tc, cum_cc = compute_cumulative()
+    
+    if cum_tc is not None and not cum_tc.empty:
+        # Metrics Row
+        total_tests = int(cum_tc.iloc[-1]["Total"]) if not cum_tc.empty else 0
+        total_ipd = int(cum_tc.iloc[-1]["IPD"]) if not cum_tc.empty else 0
+        total_opd = int(cum_tc.iloc[-1]["OPD"]) if not cum_tc.empty else 0
+        
+        m1, m2, m3 = st.columns(3)
+        with m1:
+            st.metric("📋 Total Cumulative Tests", total_tests)
+        with m2:
+            st.metric("🛏️ Total IPD", total_ipd)
+        with m3:
+            st.metric("🚶 Total OPD", total_opd)
+        
+        # Charts Row
+        st.markdown("---")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### 📊 Test Count Distribution")
+            # Prepare data excluding Grand Total row
+            tc_data = cum_tc[cum_tc["TestName"] != "Grand Total"].copy()
+            
+            fig_tc = px.bar(
+                tc_data,
+                x="TestName",
+                y=["IPD", "OPD"],
+                title="IPD vs OPD by Test",
+                barmode="group",
+                color_discrete_map={"IPD": "#ffffff", "OPD": "#cccccc"}
+            )
+            fig_tc.update_layout(
+                hovermode="x unified",
+                showlegend=True,
+                height=400,
+                template="plotly_dark",
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+                font={"color": "#ffffff"}
+            )
+            st.plotly_chart(fig_tc, use_container_width=True)
+        
+        with col2:
+            st.markdown("#### 📈 Category Distribution")
+            cc_data = cum_cc[cum_cc["Category"] != "Grand Total"].copy()
+            
+            fig_cc = px.pie(
+                cc_data,
+                values="Count",
+                names="Category",
+                title="Tests by Category",
+                color_discrete_sequence=["#ffffff", "#e0e0e0", "#b0b0b0", "#808080"]
+            )
+            fig_cc.update_layout(
+                height=400,
+                paper_bgcolor="rgba(0,0,0,0)",
+                font={"color": "#ffffff"}
+            )
+            st.plotly_chart(fig_cc, use_container_width=True)
+        
+        # Detailed Tables
+        st.markdown("---")
+        st.markdown("#### 📈 Detailed Cumulative Data")
+        
+        tab_test, tab_cat = st.tabs(["🧬 Test Counts", "📂 Category Counts"])
+        
+        with tab_test:
+            st.dataframe(cum_tc, use_container_width=True, hide_index=True)
+        
+        with tab_cat:
+            st.dataframe(cum_cc, use_container_width=True, hide_index=True)
+    else:
+        st.info("📊 No cumulative data available. Save some reports first!")
